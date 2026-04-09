@@ -6,7 +6,7 @@
       <a-button type="small" @click="closeAlert()">{{ i18n.ok }}</a-button>
     </div>
 
-    <!-- CONFRIM -->
+    <!-- CONFIRM -->
     <div class="message-box" v-show="confirmMessage !== ''">
       <div>{{ confirmMessage }}</div>
       <div class="buttons">
@@ -32,7 +32,7 @@ export default Vue.extend({
   computed: mapState("notification", [
     "message",
     "messageIdle",
-    "confirmMessage"
+    "confirmMessage",
   ]),
   methods: {
     closeAlert() {
@@ -47,7 +47,7 @@ export default Vue.extend({
       const confirmEvent = new CustomEvent("confirm", { detail: false });
       window.dispatchEvent(confirmEvent);
       return;
-    }
-  }
+    },
+  },
 });
 </script>

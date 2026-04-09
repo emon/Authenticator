@@ -2,16 +2,27 @@
   <div
     v-cloak
     v-bind:class="{
-      'theme-normal': theme !== 'accessibility' && theme !== 'dark',
+      'theme-normal':
+        theme !== 'accessibility' &&
+        theme !== 'dark' &&
+        theme !== 'simple' &&
+        theme !== 'compact' &&
+        theme !== 'flat',
       'theme-accessibility': theme === 'accessibility',
-      'theme-dark': theme === 'dark'
+      'theme-dark': theme === 'dark',
+      'theme-simple': theme === 'simple',
+      'theme-compact': theme === 'compact',
+      'theme-flat': theme === 'flat',
+      hideoutline,
     }"
+    v-on:mousedown="hideoutline = true"
+    v-on:keydown="hideoutline = false"
   >
     <MainHeader />
     <MainBody
       v-bind:class="{
         timeout: style.timeout && !style.isEditing,
-        edit: style.isEditing
+        edit: style.isEditing,
       }"
     />
 
@@ -25,7 +36,7 @@
       v-bind:class="{
         fadein: style.fadein,
         fadeout: style.fadeout,
-        show: style.show
+        show: style.show,
       }"
     />
 
@@ -36,7 +47,7 @@
       id="notification"
       v-bind:class="{
         fadein: style.notificationFadein,
-        fadeout: style.notificationFadeout
+        fadeout: style.notificationFadeout,
       }"
     >
       {{ notification }}
@@ -51,7 +62,7 @@
     ></div>
 
     <!-- CLIPBOARD -->
-    <input type="text" id="codeClipboard" />
+    <input type="text" id="codeClipboard" tabindex="-1" />
   </div>
 </template>
 <script lang="ts">
@@ -68,7 +79,7 @@ const computedPrototype = [
   mapState("style", ["style"]),
   mapState("menu", ["theme"]),
   mapState("qr", ["qr"]),
-  mapState("notification", ["notification"])
+  mapState("notification", ["notification"]),
 ];
 
 let computed = {};
@@ -78,18 +89,23 @@ for (const module of computedPrototype) {
 }
 
 export default Vue.extend({
+  data: function () {
+    return {
+      hideoutline: true,
+    };
+  },
   computed,
   methods: {
     hideQr() {
       this.$store.commit("style/hideQr");
-    }
+    },
   },
   components: {
     MainHeader,
     MainBody,
     MenuPage,
     PageHandler,
-    NotificationHandler
-  }
+    NotificationHandler,
+  },
 });
 </script>

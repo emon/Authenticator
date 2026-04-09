@@ -1,13 +1,17 @@
+import { UserSettings } from "../models/settings";
+
 export class Backup implements Module {
-  getModule() {
+  async getModule() {
+    UserSettings.updateItems();
+
     return {
       state: {
-        dropboxEncrypted: localStorage.dropboxEncrypted === "true",
-        driveEncrypted: localStorage.driveEncrypted === "true",
-        oneDriveEncrypted: localStorage.oneDriveEncrypted === "true",
-        dropboxToken: Boolean(localStorage.dropboxToken),
-        driveToken: Boolean(localStorage.driveToken),
-        oneDriveToken: Boolean(localStorage.oneDriveToken)
+        dropboxEncrypted: UserSettings.items.dropboxEncrypted === true,
+        driveEncrypted: UserSettings.items.driveEncrypted === true,
+        oneDriveEncrypted: UserSettings.items.oneDriveEncrypted === true,
+        dropboxToken: Boolean(UserSettings.items.dropboxToken),
+        driveToken: Boolean(UserSettings.items.driveToken),
+        oneDriveToken: Boolean(UserSettings.items.oneDriveToken),
       },
       mutations: {
         setToken(
@@ -24,7 +28,7 @@ export class Backup implements Module {
               break;
 
             case "onedrive":
-              state.driveToken = args.value;
+              state.oneDriveToken = args.value;
               break;
 
             default:
@@ -48,9 +52,9 @@ export class Backup implements Module {
             default:
               break;
           }
-        }
+        },
       },
-      namespaced: true
+      namespaced: true,
     };
   }
 }

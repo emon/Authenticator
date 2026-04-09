@@ -1,6 +1,6 @@
 <template>
   <div>
-    <p style="margin: 10px 20px 20px 20px;">
+    <p style="margin: 10px 20px 20px 20px">
       {{ i18n.import_backup_qr_in_batches }}
     </p>
     <a-file-input
@@ -41,13 +41,19 @@ export default Vue.extend({
           }
         }
 
+        const result = await getEntryDataFromOTPAuthPerLine(
+          otpUrlList.join("\n")
+        );
+
         let importData: {
           // @ts-ignore
           key?: { enc: string; hash: string };
-          [hash: string]: OTPStorage;
-        } = await getEntryDataFromOTPAuthPerLine(otpUrlList.join("\n"));
+          [hash: string]: RawOTPStorage;
+        } = result.exportData;
 
-        let decryptedFileData: { [hash: string]: OTPStorage } = importData;
+        const { failedCount, succeededCount } = result;
+
+        let decryptedFileData: { [hash: string]: RawOTPStorage } = importData;
 
         if (Object.keys(decryptedFileData).length) {
           await EntryStorage.import(
@@ -57,8 +63,12 @@ export default Vue.extend({
 
           if (hasFailedResults) {
             alert(this.i18n.import_backup_qr_partly_failed);
-          } else {
+          } else if (failedCount && succeededCount) {
+            alert(this.i18n.migration_partly_fail);
+          } else if (succeededCount) {
             alert(this.i18n.updateSuccess);
+          } else {
+            alert(this.i18n.migration_fail);
           }
 
           if (closeWindow) {
@@ -78,12 +88,12 @@ export default Vue.extend({
         }
       }
       return;
-    }
-  }
+    },
+  },
 });
 
 async function getOtpUrlFromQrFile(file: File): Promise<string | null> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
       const imageUrl = reader.result as string;

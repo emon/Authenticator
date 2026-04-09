@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/ban-types */
 interface Module {
   getModule(): Promise<VuexConstructor> | VuexConstructor;
 }
@@ -34,9 +35,10 @@ interface MenuState {
   autolock: number;
   useAutofill: boolean;
   smartFilter: boolean;
+  enableContextMenu: boolean;
   theme: string;
   backupDisabled: boolean;
-  storageArea: string;
+  storageArea: "sync" | "local";
 }
 
 interface StyleState {
@@ -58,7 +60,8 @@ interface StyleState {
 
 interface AccountsState {
   entries: OTPEntryInterface[];
-  encryption: EncryptionInterface;
+  defaultEncryption: string;
+  encryption: Map<string, EncryptionInterface>;
   OTPType: number;
   shouldShowPassphrase: boolean;
   sectorStart: boolean;
@@ -69,9 +72,10 @@ interface AccountsState {
   siteName: (string | null)[];
   showSearch: boolean;
   exportData: { [k: string]: OTPEntryInterface };
-  exportEncData: { [k: string]: OTPEntryInterface };
-  key: { enc: string; hash: string } | null;
+  exportEncData: { [k: string]: OTPEntryInterface | Key };
+  keys: OldKey | Key[];
   wrongPassword: boolean;
+  initComplete: boolean;
 }
 
 interface NotificationState {
@@ -88,4 +92,13 @@ interface BackupState {
   dropboxToken: boolean;
   driveToken: boolean;
   oneDriveToken: boolean;
+}
+
+interface AdvisorState {
+  insights: AdvisorInsightInterface[];
+  ignoreList: string[];
+}
+
+interface PermissionsState {
+  permissions: PermissionInterface[];
 }

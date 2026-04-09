@@ -1,20 +1,25 @@
 import { getCredentials } from "./credentials";
 import { Encryption } from "./encryption";
+import { UserSettings } from "./settings";
 import { EntryStorage } from "./storage";
 
 export class Dropbox implements BackupProvider {
   private async getToken() {
-    return localStorage.dropboxToken || "";
+    await UserSettings.updateItems();
+    return UserSettings.items.dropboxToken || "";
   }
 
   async upload(encryption: Encryption) {
-    if (localStorage.dropboxEncrypted === undefined) {
+    await UserSettings.updateItems();
+
+    if (UserSettings.items.dropboxEncrypted === undefined) {
       // Encrypt by default if user hasn't set yet
-      localStorage.dropboxEncrypted = "true";
+      UserSettings.items.dropboxEncrypted = true;
+      UserSettings.commitItems();
     }
     const exportData = await EntryStorage.backupGetExport(
       encryption,
-      localStorage.dropboxEncrypted === "true"
+      UserSettings.items.dropboxEncrypted === true
     );
     const backup = JSON.stringify(exportData, null, 2);
 
@@ -27,14 +32,11 @@ export class Dropbox implements BackupProvider {
         }
         try {
           const xhr = new XMLHttpRequest();
-          const now = new Date()
-            .toISOString()
-            .slice(0, 10)
-            .replace(/-/g, "");
+          const now = new Date().toISOString().slice(0, 10).replace(/-/g, "");
           const apiArg = {
             path: `/${now}.json`,
             mode: "add",
-            autorename: true
+            autorename: true,
           };
           xhr.open("POST", url);
           xhr.setRequestHeader("Authorization", "Bearer " + token);
@@ -43,8 +45,9 @@ export class Dropbox implements BackupProvider {
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("dropboxToken");
-                localStorage.dropboxRevoked = true;
+                UserSettings.items.dropboxToken = undefined;
+                UserSettings.items.dropboxRevoked = true;
+                UserSettings.commitItems();
                 return resolve(false);
               }
               try {
@@ -55,19 +58,20 @@ export class Dropbox implements BackupProvider {
                   resolve(false);
                 }
               } catch (error) {
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
           };
           xhr.send(backup);
         } catch (error) {
-          return reject(error);
+          return reject(error as Error);
         }
       }
     );
   }
   async getUser() {
+    await UserSettings.updateItems();
     const url = "https://api.dropboxapi.com/2/users/get_current_account";
     const token = await this.getToken();
     return new Promise((resolve: (value: string) => void) => {
@@ -80,8 +84,9 @@ export class Dropbox implements BackupProvider {
       xhr.onreadystatechange = () => {
         if (xhr.readyState === 4) {
           if (xhr.status === 401) {
-            localStorage.removeItem("dropboxToken");
-            localStorage.dropboxRevoked = true;
+            UserSettings.items.dropboxToken = undefined;
+            UserSettings.items.dropboxRevoked = true;
+            UserSettings.commitItems();
             resolve(
               "Error: Response was 401. You will be logged out the next time you open Authenticator."
             );
@@ -91,7 +96,7 @@ export class Dropbox implements BackupProvider {
             if (res.email) {
               resolve(res.email);
             } else {
-              console.error("Could not find email in reponse.", res);
+              console.error("Could not find email in response.", res);
               resolve("Error: res.email was undefined.");
             }
           } catch (e) {
@@ -108,8 +113,9 @@ export class Dropbox implements BackupProvider {
 
 export class Drive implements BackupProvider {
   private async getToken() {
+    await UserSettings.updateItems();
     if (
-      !localStorage.driveToken ||
+      !UserSettings.items.driveToken ||
       (await new Promise(
         (
           resolve: (value: boolean) => void,
@@ -119,7 +125,7 @@ export class Drive implements BackupProvider {
           xhr.open("GET", "https://www.googleapis.com/drive/v3/files");
           xhr.setRequestHeader(
             "Authorization",
-            "Bearer " + localStorage.driveToken
+            "Bearer " + UserSettings.items.driveToken
           );
           xhr.onreadystatechange = async () => {
             if (xhr.readyState === 4) {
@@ -135,10 +141,11 @@ export class Drive implements BackupProvider {
                       // Clear invalid token from
                       // chrome://identity-internals/
                       await chrome.identity.removeCachedAuthToken({
-                        token: localStorage.driveToken
+                        token: UserSettings.items.driveToken as string,
                       });
                     }
-                    localStorage.driveToken = "";
+                    UserSettings.items.driveToken = undefined;
+                    UserSettings.commitItems();
                     resolve(true);
                   }
                 } else {
@@ -146,7 +153,7 @@ export class Drive implements BackupProvider {
                 }
               } catch (error) {
                 console.error(error);
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -157,10 +164,12 @@ export class Drive implements BackupProvider {
     ) {
       await this.refreshToken();
     }
-    return localStorage.driveToken;
+    return UserSettings.items.driveToken;
   }
 
   private async refreshToken() {
+    await UserSettings.updateItems();
+
     if (
       navigator.userAgent.indexOf("Chrome") !== -1 &&
       navigator.userAgent.indexOf("OPR") === -1 &&
@@ -170,13 +179,14 @@ export class Drive implements BackupProvider {
         return chrome.identity.getAuthToken(
           {
             interactive: false,
-            scopes: ["https://www.googleapis.com/auth/drive.file"]
+            scopes: ["https://www.googleapis.com/auth/drive.file"],
           },
-          token => {
-            localStorage.driveToken = token;
+          (token) => {
+            UserSettings.items.driveToken = token;
             if (!token) {
-              localStorage.driveRevoked = true;
+              UserSettings.items.driveRevoked = true;
             }
+            UserSettings.commitItems();
             resolve(Boolean(token));
           }
         );
@@ -195,33 +205,36 @@ export class Drive implements BackupProvider {
               "&client_secret=" +
               getCredentials().drive.client_secret +
               "&refresh_token=" +
-              localStorage.driveRefreshToken +
+              UserSettings.items.driveRefreshToken +
               "&grant_type=refresh_token"
           );
           xhr.setRequestHeader("Accept", "application/json");
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("driveRefreshToken");
-                localStorage.driveRevoked = true;
+                UserSettings.items.driveRefreshToken = undefined;
+                UserSettings.items.driveRevoked = true;
+                UserSettings.commitItems();
                 return resolve(false);
               }
               try {
                 const res = JSON.parse(xhr.responseText);
                 if (res.error) {
                   if (res.error === "invalid_grant") {
-                    localStorage.removeItem("driveRefreshToken");
-                    localStorage.driveRevoked = true;
+                    UserSettings.items.driveRefreshToken = undefined;
+                    UserSettings.items.driveRevoked = true;
+                    UserSettings.commitItems();
                   }
                   console.error(res.error_description);
                   resolve(false);
                 } else {
-                  localStorage.driveToken = res.access_token;
+                  UserSettings.items.driveToken = res.access_token;
+                  UserSettings.commitItems();
                   resolve(true);
                 }
               } catch (error) {
                 console.error(error);
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -237,7 +250,8 @@ export class Drive implements BackupProvider {
     if (!token) {
       return false;
     }
-    if (localStorage.driveFolder) {
+    await UserSettings.updateItems();
+    if (UserSettings.items.driveFolder) {
       await new Promise(
         (
           resolve: (value: boolean) => void,
@@ -247,7 +261,7 @@ export class Drive implements BackupProvider {
           xhr.open(
             "GET",
             "https://www.googleapis.com/drive/v3/files/" +
-              localStorage.driveFolder +
+              UserSettings.items.driveFolder +
               "?fields=trashed"
           );
           xhr.setRequestHeader("Authorization", "Bearer " + token);
@@ -255,28 +269,31 @@ export class Drive implements BackupProvider {
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("driveToken");
+                UserSettings.items.driveToken = undefined;
+                UserSettings.commitItems();
                 return resolve(false);
               }
               try {
                 const res = JSON.parse(xhr.responseText);
                 if (res.error) {
                   if (res.error.code === 404) {
-                    localStorage.driveFolder = "";
+                    UserSettings.items.driveFolder = undefined;
+                    UserSettings.commitItems();
                     resolve(true);
+                  } else {
+                    console.error(res.error.message);
+                    resolve(false);
                   }
                 } else if (res.trashed) {
-                  localStorage.driveFolder = "";
+                  UserSettings.items.driveFolder = undefined;
+                  UserSettings.commitItems();
                   resolve(true);
-                } else if (res.error) {
-                  console.error(res.error.message);
-                  resolve(false);
                 } else {
                   resolve(true);
                 }
               } catch (error) {
                 console.error(error);
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -285,7 +302,7 @@ export class Drive implements BackupProvider {
         }
       );
     }
-    if (!localStorage.driveFolder) {
+    if (!UserSettings.items.driveFolder) {
       await new Promise(
         (
           resolve: (value: boolean) => void,
@@ -300,13 +317,15 @@ export class Drive implements BackupProvider {
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("driveToken");
+                UserSettings.items.driveToken = undefined;
+                UserSettings.commitItems();
                 return resolve(false);
               }
               try {
                 const res = JSON.parse(xhr.responseText);
                 if (!res.error) {
-                  localStorage.driveFolder = res.id;
+                  UserSettings.items.driveFolder = res.id;
+                  UserSettings.commitItems();
                   resolve(true);
                 } else {
                   console.error(res.error.message);
@@ -314,7 +333,7 @@ export class Drive implements BackupProvider {
                 }
               } catch (error) {
                 console.error(error);
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -322,22 +341,24 @@ export class Drive implements BackupProvider {
           xhr.send(
             JSON.stringify({
               name: "Authenticator Backups",
-              mimeType: "application/vnd.google-apps.folder"
+              mimeType: "application/vnd.google-apps.folder",
             })
           );
         }
       );
     }
-    return localStorage.driveFolder;
+    return UserSettings.items.driveFolder;
   }
 
   async upload(encryption: Encryption) {
-    if (localStorage.driveEncrypted === undefined) {
-      localStorage.driveEncrypted = "true";
+    await UserSettings.updateItems();
+    if (UserSettings.items.driveEncrypted === undefined) {
+      UserSettings.items.driveEncrypted = true;
+      UserSettings.commitItems();
     }
     const exportData = await EntryStorage.backupGetExport(
       encryption,
-      localStorage.driveEncrypted === "true"
+      UserSettings.items.driveEncrypted === true
     );
     const backup = JSON.stringify(exportData, null, 2);
 
@@ -353,10 +374,7 @@ export class Drive implements BackupProvider {
         }
         try {
           const xhr = new XMLHttpRequest();
-          const now = new Date()
-            .toISOString()
-            .slice(0, 10)
-            .replace(/-/g, "");
+          const now = new Date().toISOString().slice(0, 10).replace(/-/g, "");
           xhr.open(
             "POST",
             "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
@@ -369,7 +387,8 @@ export class Drive implements BackupProvider {
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("driveToken");
+                UserSettings.items.driveToken = undefined;
+                UserSettings.commitItems();
                 return resolve(false);
               }
               try {
@@ -381,7 +400,7 @@ export class Drive implements BackupProvider {
                   resolve(false);
                 }
               } catch (error) {
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -392,22 +411,22 @@ export class Drive implements BackupProvider {
             "",
             JSON.stringify({
               name: `${now}.json`,
-              parents: [localStorage.driveFolder]
+              parents: [UserSettings.items.driveFolder],
             }),
             "",
             "--segment_marker",
             "Content-Type: application/octet-stream",
             "",
             backup,
-            "--segment_marker--"
+            "--segment_marker--",
           ];
           let requestData = "";
-          requestDataPrototype.forEach(line => {
+          requestDataPrototype.forEach((line) => {
             requestData = requestData + line + "\n";
           });
           xhr.send(requestData);
         } catch (error) {
-          return reject(error);
+          return reject(error as Error);
         }
       }
     );
@@ -419,6 +438,7 @@ export class Drive implements BackupProvider {
       return "Error: Access revoked or expired.";
     }
 
+    await UserSettings.updateItems();
     return new Promise((resolve: (value: string) => void) => {
       if (!token) {
         resolve("Error: Access revoked or expired.");
@@ -429,7 +449,8 @@ export class Drive implements BackupProvider {
       xhr.onreadystatechange = () => {
         if (xhr.readyState === 4) {
           if (xhr.status === 401) {
-            localStorage.removeItem("driveToken");
+            UserSettings.items.driveToken = undefined;
+            UserSettings.commitItems();
             resolve(
               "Error: Response was 401. You will be logged out the next time you open Authenticator."
             );
@@ -456,8 +477,9 @@ export class Drive implements BackupProvider {
 
 export class OneDrive implements BackupProvider {
   private async getToken() {
+    await UserSettings.updateItems();
     if (
-      !localStorage.oneDriveToken ||
+      !UserSettings.items.oneDriveToken ||
       (await new Promise(
         (
           resolve: (value: boolean) => void,
@@ -470,7 +492,7 @@ export class OneDrive implements BackupProvider {
           );
           xhr.setRequestHeader(
             "Authorization",
-            "Bearer " + localStorage.oneDriveToken
+            "Bearer " + UserSettings.items.oneDriveToken
           );
           xhr.onreadystatechange = async () => {
             if (xhr.readyState === 4) {
@@ -478,7 +500,8 @@ export class OneDrive implements BackupProvider {
                 const res = JSON.parse(xhr.responseText);
                 if (res.error) {
                   if (res.error.code === 401) {
-                    localStorage.oneDriveToken = "";
+                    UserSettings.items.oneDriveToken = undefined;
+                    UserSettings.commitItems();
                     resolve(true);
                   }
                 } else {
@@ -486,7 +509,7 @@ export class OneDrive implements BackupProvider {
                 }
               } catch (error) {
                 console.error(error);
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
@@ -497,10 +520,11 @@ export class OneDrive implements BackupProvider {
     ) {
       await this.refreshToken();
     }
-    return localStorage.oneDriveToken;
+    return UserSettings.items.oneDriveToken;
   }
 
   private async refreshToken() {
+    await UserSettings.updateItems();
     return new Promise(
       (resolve: (value: boolean) => void, reject: (reason: Error) => void) => {
         const xhr = new XMLHttpRequest();
@@ -515,48 +539,54 @@ export class OneDrive implements BackupProvider {
         xhr.onreadystatechange = () => {
           if (xhr.readyState === 4) {
             if (xhr.status === 401) {
-              localStorage.removeItem("oneDriveRefreshToken");
-              localStorage.oneDriveRevoked = true;
+              UserSettings.items.oneDriveRefreshToken = undefined;
+              UserSettings.items.oneDriveRevoked = true;
+              UserSettings.commitItems();
               return resolve(false);
             }
             try {
               const res = JSON.parse(xhr.responseText);
               if (res.error) {
                 if (res.error === "invalid_grant") {
-                  localStorage.removeItem("oneDriveRefreshToken");
-                  localStorage.oneDriveRevoked = true;
+                  UserSettings.items.oneDriveRefreshToken = undefined;
+                  UserSettings.items.oneDriveRevoked = true;
+                  UserSettings.commitItems();
                 }
                 console.error(res.error_description);
                 resolve(false);
               } else {
-                localStorage.oneDriveToken = res.access_token;
+                UserSettings.items.oneDriveToken = res.access_token;
+                UserSettings.commitItems();
                 resolve(true);
               }
             } catch (error) {
               console.error(error);
-              reject(error);
+              reject(error as Error);
             }
           }
           return;
         };
         xhr.send(
           `client_id=${getCredentials().onedrive.client_id}&refresh_token=${
-            localStorage.oneDriveRefreshToken
+            UserSettings.items.oneDriveRefreshToken
           }&client_secret=${encodeURIComponent(
             getCredentials().onedrive.client_secret
-          )}&grant_type=refresh_token&scope=https%3A%2F%2Fgraph.microsoft.com%2FFiles.ReadWrite.AppFolder%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20offline_access`
+          )}&grant_type=refresh_token&scope=https%3A%2F%2Fgraph.microsoft.com%2FFiles.ReadWrite${
+            UserSettings.items.oneDriveBusiness !== true ? ".AppFolder" : ""
+          }%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20offline_access`
         );
       }
     );
   }
 
   async upload(encryption: Encryption) {
-    if (localStorage.oneDriveEncrypted === undefined) {
-      localStorage.oneDriveEncrypted = "true";
+    await UserSettings.updateItems();
+    if (UserSettings.items.oneDriveEncrypted === undefined) {
+      UserSettings.items.oneDriveEncrypted = true;
     }
     const exportData = await EntryStorage.backupGetExport(
       encryption,
-      localStorage.oneDriveEncrypted === "true"
+      UserSettings.items.oneDriveEncrypted === true
     );
     const backup = JSON.stringify(exportData, null, 2);
 
@@ -572,10 +602,7 @@ export class OneDrive implements BackupProvider {
         }
         try {
           const xhr = new XMLHttpRequest();
-          const now = new Date()
-            .toISOString()
-            .slice(0, 10)
-            .replace(/-/g, "");
+          const now = new Date().toISOString().slice(0, 10).replace(/-/g, "");
           xhr.open(
             "PUT",
             `https://graph.microsoft.com/v1.0/me/drive/special/approot:/${now}.json:/content`
@@ -585,7 +612,7 @@ export class OneDrive implements BackupProvider {
           xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
               if (xhr.status === 401) {
-                localStorage.removeItem("oneDriveToken");
+                UserSettings.removeItem("oneDriveToken");
                 return resolve(false);
               }
               try {
@@ -597,14 +624,14 @@ export class OneDrive implements BackupProvider {
                   resolve(false);
                 }
               } catch (error) {
-                reject(error);
+                reject(error as Error);
               }
             }
             return;
           };
           xhr.send(backup);
         } catch (error) {
-          return reject(error);
+          return reject(error as Error);
         }
       }
     );
@@ -616,6 +643,8 @@ export class OneDrive implements BackupProvider {
       return "Error: Access revoked or expired.";
     }
 
+    await UserSettings.updateItems();
+
     return new Promise((resolve: (value: string) => void) => {
       const xhr = new XMLHttpRequest();
       xhr.open("GET", "https://graph.microsoft.com/v1.0/me/");
@@ -623,7 +652,8 @@ export class OneDrive implements BackupProvider {
       xhr.onreadystatechange = () => {
         if (xhr.readyState === 4) {
           if (xhr.status === 401) {
-            localStorage.removeItem("oneDriveToken");
+            UserSettings.items.oneDriveToken = undefined;
+            UserSettings.commitItems();
             resolve(
               "Error: Response was 401. You will be logged out the next time you open Authenticator."
             );

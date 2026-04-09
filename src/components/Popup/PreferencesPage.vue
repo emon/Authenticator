@@ -3,16 +3,19 @@
     <a-select-input
       :label="i18n.theme"
       v-model="theme"
-      style="margin-left: 10px;"
+      style="margin-left: 10px"
     >
       <option value="normal">{{ i18n.theme_light }}</option>
       <option value="dark">{{ i18n.theme_dark }}</option>
+      <option value="simple">{{ i18n.theme_simple }}</option>
+      <option value="compact">{{ i18n.theme_compact }}</option>
       <option value="accessibility">{{ i18n.theme_high_contrast }}</option>
+      <option value="flat">{{ i18n.theme_flat }}</option>
     </a-select-input>
     <a-select-input
       :label="i18n.scale"
       v-model="zoom"
-      style="margin-left: 10px;"
+      style="margin-left: 10px"
     >
       <option value="125">125%</option>
       <option value="100">100%</option>
@@ -27,18 +30,30 @@
       <option value="20">20%</option>
     </a-select-input>
     <a-toggle-input :label="i18n.use_autofill" v-model="useAutofill" />
+    <a-toggle-input
+      :label="i18n.browser_sync"
+      v-model="browserSync"
+      :disabled="storageArea"
+      @change="migrateStorage()"
+    />
     <a-toggle-input :label="i18n.smart_filter" v-model="smartFilter" />
-    <div class="control-group" v-show="encryption.getEncryptionStatus()">
+    <a-toggle-input
+      :label="i18n.enable_context_menu"
+      v-model="enableContextMenu"
+      @change="requireContextMenuPermission()"
+      v-if="isSupported"
+    />
+    <div class="control-group" v-show="!!defaultEncryption">
       <label class="combo-label">{{ i18n.autolock }}</label>
       <input
         class="input"
         type="number"
         min="0"
-        style="width: 70px; text-align: center;"
+        style="width: 70px; text-align: center"
         v-model="autolock"
         :disabled="Boolean(enforceAutolock)"
       />
-      <span class="combo-label" style="margin-left: 0; margin-right: 20px;">{{
+      <span class="combo-label" style="margin-left: 0; margin-right: 20px">{{
         i18n.minutes
       }}</span>
     </div>
@@ -47,6 +62,8 @@
 </template>
 <script lang="ts">
 import Vue from "vue";
+import { isFirefox, isSafari } from "../../browser";
+import { UserSettings } from "../../models/settings";
 
 export default Vue.extend({
   computed: {
@@ -56,7 +73,7 @@ export default Vue.extend({
       },
       set(zoom: number) {
         this.$store.commit("menu/setZoom", zoom);
-      }
+      },
     },
     useAutofill: {
       get(): boolean {
@@ -64,7 +81,7 @@ export default Vue.extend({
       },
       set(useAutofill: boolean) {
         this.$store.commit("menu/setAutofill", useAutofill);
-      }
+      },
     },
     smartFilter: {
       get(): boolean {
@@ -72,7 +89,19 @@ export default Vue.extend({
       },
       set(smartFilter: boolean) {
         this.$store.commit("menu/setSmartFilter", smartFilter);
-      }
+        this.$store.commit(
+          "notification/alert",
+          this.i18n.activate_auto_filter
+        );
+      },
+    },
+    enableContextMenu: {
+      get(): boolean {
+        return this.$store.state.menu.enableContextMenu;
+      },
+      set(enableContextMenu: boolean) {
+        this.$store.commit("menu/setEnableContextMenu", enableContextMenu);
+      },
     },
     theme: {
       get(): string {
@@ -80,10 +109,10 @@ export default Vue.extend({
       },
       set(theme: string) {
         this.$store.commit("menu/setTheme", theme);
-      }
+      },
     },
-    encryption(): EncryptionInterface {
-      return this.$store.state.accounts.encryption;
+    defaultEncryption(): string {
+      return this.$store.state.accounts.defaultEncryption;
     },
     enforceAutolock() {
       return this.$store.state.menu.enforceAutolock;
@@ -99,24 +128,81 @@ export default Vue.extend({
       set(autolock: number) {
         this.$store.commit("menu/setAutolock", autolock);
         chrome.runtime.sendMessage({ action: "resetAutolock" });
-      }
-    }
+      },
+    },
+    storageArea() {
+      return this.$store.state.menu.storageArea;
+    },
+    browserSync: {
+      get(): boolean {
+        return this.newStorageLocation === "sync";
+      },
+      set(value) {
+        this.newStorageLocation = value ? "sync" : "local";
+      },
+    },
+    isSupported: {
+      get(): boolean {
+        return !isFirefox && !isSafari;
+      },
+    },
+  },
+  data() {
+    return {
+      newStorageLocation: "",
+    };
+  },
+  created() {
+    UserSettings.updateItems().then(() => {
+      this.newStorageLocation =
+        this.$store.state.menu.storageArea ||
+        UserSettings.items.storageLocation;
+    });
   },
   methods: {
     popOut() {
       let windowType;
-      if (navigator.userAgent.indexOf("Firefox") !== -1) {
+      if (isFirefox) {
         windowType = "detached_panel";
       } else {
         windowType = "panel";
       }
       chrome.windows.create({
-        url: chrome.extension.getURL("view/popup.html?popup=true"),
-        type: windowType,
+        url: chrome.runtime.getURL("view/popup.html?popup=true"),
+        type: windowType as chrome.windows.createTypeEnum,
         height: window.innerHeight,
-        width: window.innerWidth
+        width: window.innerWidth,
       });
-    }
-  }
+    },
+    migrateStorage() {
+      this.$store.commit("currentView/changeView", "LoadingPage");
+      this.$store
+        .dispatch("accounts/migrateStorage", this.newStorageLocation)
+        .then((m) => {
+          this.$store.commit("notification/alert", this.i18n[m]);
+          this.$store.commit("currentView/changeView", "PreferencesPage");
+        }),
+        (r: string) => {
+          this.$store.commit("notification/alert", this.i18n.updateFailure + r);
+          this.$store.commit("currentView/changeView", "PreferencesPage");
+        };
+    },
+    requireContextMenuPermission() {
+      chrome.permissions.request(
+        {
+          permissions: ["contextMenus"],
+        },
+        (granted) => {
+          if (!granted) {
+            this.enableContextMenu = false;
+            return;
+          }
+          chrome.runtime.sendMessage({
+            action: "updateContextMenu",
+          });
+        }
+      );
+    },
+  },
 });
 </script>

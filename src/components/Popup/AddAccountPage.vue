@@ -30,8 +30,10 @@
         <option :value="OTPAlgorithm.SHA1">SHA-1</option>
         <option :value="OTPAlgorithm.SHA256">SHA-256</option>
         <option :value="OTPAlgorithm.SHA512">SHA-512</option>
+        <option :value="OTPAlgorithm.GOST3411_2012_256">GOST 34.11 256</option>
+        <option :value="OTPAlgorithm.GOST3411_2012_512">GOST 34.11 512</option>
       </a-select-input>
-      <a-select-input :label="i18n.type" v-model="newAccount.type">
+      <a-select-input :label="i18n.type" v-model.number="newAccount.type">
         <option :value="OTPType.totp">{{ i18n.based_on_time }}</option>
         <option :value="OTPType.hotp">{{ i18n.based_on_counter }}</option>
         <option :value="OTPType.battle">Battle.net</option>
@@ -47,7 +49,7 @@ import { mapState } from "vuex";
 import { OTPType, OTPEntry, OTPAlgorithm } from "../../models/otp";
 
 export default Vue.extend({
-  data: function(): {
+  data: function (): {
     newAccount: {
       issuer: string;
       account: string;
@@ -66,8 +68,8 @@ export default Vue.extend({
         type: OTPType.totp,
         period: undefined,
         digits: 6,
-        algorithm: OTPAlgorithm.SHA1
-      }
+        algorithm: OTPAlgorithm.SHA1,
+      },
     };
   },
   computed: mapState("accounts", ["OTPType", "OTPAlgorithm"]),
@@ -113,6 +115,11 @@ export default Vue.extend({
         this.newAccount.period = undefined;
       }
 
+      const defaultEncyptionKey = this.$store.state.accounts.defaultEncryption;
+      const encryption = this.$store.state.accounts.encryption[
+        defaultEncyptionKey
+      ];
+
       const entry = new OTPEntry(
         {
           type,
@@ -124,9 +131,9 @@ export default Vue.extend({
           counter: 0,
           period: this.newAccount.period,
           digits: this.newAccount.digits,
-          algorithm: this.newAccount.algorithm
+          algorithm: this.newAccount.algorithm,
         },
-        this.$store.state.accounts.encryption
+        encryption
       );
 
       await entry.create();
@@ -142,7 +149,7 @@ export default Vue.extend({
         }, 0);
       }
       return;
-    }
-  }
+    },
+  },
 });
 </script>

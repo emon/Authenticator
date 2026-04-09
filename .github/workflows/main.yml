@@ -1,10 +1,6 @@
 name: CI
 
-on:
-  push:
-    branches: [ dev ]
-  pull_request:
-    branches: [ dev ]
+on: [push, pull_request]
 
 jobs:
   style:
@@ -13,53 +9,53 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      
+
       - name: Setup Node.js environment
         uses: actions/setup-node@v2.1.2
-      
+
       - name: Install dependencies
         run: |
           npm i prettier
-          sudo npm i -g lintspaces-cli
 
       - name: Prettier
         run: ./node_modules/prettier/bin-prettier.js --check ./src/* ./src/**/* ./src/**/**/* ./sass/*.scss
 
-      - name: lintspaces
-        run: |
-          lintspaces -nt -d 'spaces' -i 'js-comments' src/*/* src/*.ts view/* manifest-*.json css/popup.css css/import.css
-  build-ffx:
+  build:
     runs-on: ubuntu-latest
-    name: Build Firefox & run addons-linter
-    
+    name: Build ${{ matrix.platform }}
+
+    strategy:
+      matrix:
+        platform: ["chrome", "firefox"]
+
     steps:
       - uses: actions/checkout@v2
-      
+
       - name: Setup Node.js environment
         uses: actions/setup-node@v2.1.2
-      
+
       - name: Install dependencies
-        run: |
-          npm i
-          sudo npm install --only=production -g addons-linter
-          
+        run: npm ci
+
       - name: Build
-        run: npm run firefox
-        
-      - name: Run addons-linter
-        run: addons-linter firefox
-  build-chrome:
+        run: npm run ${{ matrix.platform }}
+  run-tests:
     runs-on: ubuntu-latest
-    name: Build Chrome
-    
+    name: Run tests
+    needs: [build]
+
     steps:
       - uses: actions/checkout@v2
-      
+
       - name: Setup Node.js environment
         uses: actions/setup-node@v2.1.2
-      
+
       - name: Install dependencies
-        run: npm i
-          
-      - name: Build
-        run: npm run chrome
+        run: npm ci
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+
+      - name: Test code
+        uses: mymindstorm/puppeteer-headful@8f745c770f7f4c0f9f332d7c43a775f90e53779a
+        with:
+          args: npm test

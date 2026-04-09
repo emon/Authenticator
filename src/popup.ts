@@ -16,10 +16,24 @@ import { CurrentView } from "./store/CurrentView";
 import { Menu } from "./store/Menu";
 import { Notification } from "./store/Notification";
 import { Qr } from "./store/Qr";
+import { Advisor } from "./store/Advisor";
 import { Dropbox, Drive, OneDrive } from "./models/backup";
-import { EntryStorage } from "./models/storage";
+import { syncTimeWithGoogle } from "./syncTime";
+import { StorageLocation, UserSettings } from "./models/settings";
+
+async function migrateLocalStorageToBrowserStorage() {
+  if (localStorage.length > 0) {
+    const location =
+      (localStorage.storageLocation as StorageLocation) || StorageLocation.Sync;
+    await UserSettings.convertFromLocalStorage(localStorage, location);
+    localStorage.clear();
+  }
+}
 
 async function init() {
+  await migrateLocalStorageToBrowserStorage();
+  await UserSettings.updateItems();
+
   // Add globals
   Vue.prototype.i18n = await loadI18nMessages();
 
@@ -36,18 +50,19 @@ async function init() {
   const store = new Vuex.Store({
     modules: {
       accounts: await new Accounts().getModule(),
-      backup: new Backup().getModule(),
+      advisor: await new Advisor().getModule(),
+      backup: await new Backup().getModule(),
       currentView: new CurrentView().getModule(),
       menu: await new Menu().getModule(),
       notification: new Notification().getModule(),
       qr: new Qr().getModule(),
-      style: new Style().getModule()
-    }
+      style: new Style().getModule(),
+    },
   });
 
   // Render
   const instance = new Vue({
-    render: h => h(Popup),
+    render: (h) => h(Popup),
     store,
     mounted() {
       // Update time based entries' codes
@@ -55,28 +70,26 @@ async function init() {
       setInterval(() => {
         this.$store.commit("accounts/updateCodes");
       }, 1000);
-    }
+    },
   }).$mount("#authenticator");
 
   // Prompt for password if needed
   if (instance.$store.state.accounts.shouldShowPassphrase) {
-    instance.$store.commit("style/showInfo", true);
     // If we have cached password, use that
-    if (instance.$store.state.accounts.encryption.getEncryptionStatus()) {
+    if (instance.$store.state.accounts.defaultEncryption) {
       instance.$store.commit("currentView/changeView", "LoadingPage");
-      for (const entry of instance.$store.state.accounts.entries) {
-        await entry.applyEncryption(instance.$store.state.accounts.encryption);
-      }
-      instance.$store.commit(
-        "accounts/updateExport",
-        await EntryStorage.getExport(instance.$store.state.accounts.entries)
-      );
-      instance.$store.commit("accounts/updateCodes");
-      instance.$store.commit("style/hideInfo", true);
+      await instance.$store.dispatch("accounts/updateEntries");
     } else {
+      instance.$store.commit("style/showInfo", true);
       instance.$store.commit("currentView/changeView", "EnterPasswordPage");
     }
+  } else {
+    // Set init complete if no encryption is present, otherwise this will be set in updateEntries.
+    instance.$store.commit("accounts/initComplete");
   }
+
+  // Auto focus on first entry
+  document.querySelector<HTMLAnchorElement>("a.entry[tabindex='0']")?.focus();
 
   // Set document title
   try {
@@ -86,7 +99,7 @@ async function init() {
   }
 
   // Warn if legacy password is set
-  if (localStorage.encodedPhrase) {
+  if (UserSettings.items.encodedPhrase) {
     instance.$store.commit(
       "notification/alert",
       instance.i18n.local_passphrase_warning
@@ -106,11 +119,12 @@ async function init() {
     clearInterval(backupReminder);
 
     const clientTime = Math.floor(new Date().getTime() / 1000 / 3600 / 24);
-    if (!localStorage.lastRemindingBackupTime) {
-      localStorage.lastRemindingBackupTime = clientTime;
+    if (!UserSettings.items.lastRemindingBackupTime) {
+      UserSettings.items.lastRemindingBackupTime = clientTime;
+      UserSettings.commitItems();
     } else if (
-      clientTime - localStorage.lastRemindingBackupTime >= 30 ||
-      clientTime - localStorage.lastRemindingBackupTime < 0
+      clientTime - Number(UserSettings.items.lastRemindingBackupTime) >= 30 ||
+      clientTime - Number(UserSettings.items.lastRemindingBackupTime) < 0
     ) {
       runScheduledBackup(clientTime, instance);
     }
@@ -120,7 +134,7 @@ async function init() {
   // Open search if '/' is pressed
   document.addEventListener(
     "keyup",
-    e => {
+    (e) => {
       if (e.key === "/") {
         if (instance.$store.getters["style/isMenuShown"]) {
           return;
@@ -151,9 +165,10 @@ async function init() {
     instance.$store.commit("accounts/showSearch");
   }
 
+  const query = new URLSearchParams(document.location.search.substring(1));
   // Resize window to proper size if popup
-  if (new URLSearchParams(document.location.search.substring(1)).get("popup")) {
-    const zoom = Number(localStorage.zoom) / 100 || 1;
+  if (query.get("popup")) {
+    const zoom = Number(UserSettings.items.zoom) / 100 || 1;
     const correctHeight = 480 * zoom;
     const correctWidth = 320 * zoom;
     if (
@@ -167,7 +182,7 @@ async function init() {
         correctWidth + (window.outerWidth - window.innerWidth);
       chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, {
         height: adjustedHeight,
-        width: adjustedWidth
+        width: adjustedWidth,
       });
     }
   }
@@ -175,7 +190,7 @@ async function init() {
   // TODO: give an option for this
   chrome.permissions.contains(
     { origins: ["https://www.google.com/"] },
-    hasPermission => {
+    (hasPermission) => {
       if (hasPermission) {
         syncTimeWithGoogle();
       }
@@ -189,24 +204,28 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
   if (instance.$store.state.backup.dropboxToken) {
     chrome.permissions.contains(
       { origins: ["https://*.dropboxapi.com/*"] },
-      async hasPermission => {
+      async (hasPermission) => {
         if (hasPermission) {
           try {
             const dropbox = new Dropbox();
             const res = await dropbox.upload(
-              instance.$store.state.accounts.encryption
+              instance.$store.state.accounts.encryption.get(
+                instance.$store.state.accounts.defaultEncryption
+              )
             );
             if (res) {
               // we have uploaded backup to Dropbox
               // no need to remind
-              localStorage.lastRemindingBackupTime = clientTime;
+              UserSettings.items.lastRemindingBackupTime = clientTime;
+              UserSettings.commitItems();
               return;
-            } else if (localStorage.dropboxRevoked === "true") {
+            } else if (UserSettings.items.dropboxRevoked === true) {
               instance.$store.commit(
                 "notification/alert",
                 chrome.i18n.getMessage("token_revoked", ["Dropbox"])
               );
-              localStorage.removeItem("dropboxRevoked");
+              UserSettings.items.dropboxRevoked = undefined;
+              UserSettings.removeItem("dropboxRevoked");
             }
           } catch (error) {
             // ignore
@@ -216,7 +235,8 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
           "notification/alert",
           instance.i18n.remind_backup
         );
-        localStorage.lastRemindingBackupTime = clientTime;
+        UserSettings.items.lastRemindingBackupTime = clientTime;
+        UserSettings.commitItems();
       }
     );
   }
@@ -225,25 +245,29 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
       {
         origins: [
           "https://www.googleapis.com/*",
-          "https://accounts.google.com/o/oauth2/revoke"
-        ]
+          "https://accounts.google.com/o/oauth2/revoke",
+        ],
       },
-      async hasPermission => {
+      async (hasPermission) => {
         if (hasPermission) {
           try {
             const drive = new Drive();
             const res = await drive.upload(
-              instance.$store.state.accounts.encryption
+              instance.$store.state.accounts.encryption.get(
+                instance.$store.state.accounts.defaultEncryption
+              )
             );
             if (res) {
-              localStorage.lastRemindingBackupTime = clientTime;
+              UserSettings.items.lastRemindingBackupTime = clientTime;
+              UserSettings.commitItems();
               return;
-            } else if (localStorage.driveRevoked === "true") {
+            } else if (UserSettings.items.driveRevoked === true) {
               instance.$store.commit(
                 "notification/alert",
                 chrome.i18n.getMessage("token_revoked", ["Google Drive"])
               );
-              localStorage.removeItem("driveRevoked");
+              UserSettings.items.driveRevoked = undefined;
+              UserSettings.removeItem("driveRevoked");
             }
           } catch (error) {
             // ignore
@@ -253,7 +277,8 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
           "notification/alert",
           instance.i18n.remind_backup
         );
-        localStorage.lastRemindingBackupTime = clientTime;
+        UserSettings.items.lastRemindingBackupTime = clientTime;
+        UserSettings.commitItems();
       }
     );
   }
@@ -262,25 +287,29 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
       {
         origins: [
           "https://graph.microsoft.com/me/*",
-          "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-        ]
+          "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        ],
       },
-      async hasPermission => {
+      async (hasPermission) => {
         if (hasPermission) {
           try {
             const onedrive = new OneDrive();
             const res = await onedrive.upload(
-              instance.$store.state.accounts.encryption
+              instance.$store.state.accounts.encryption.get(
+                instance.$store.state.accounts.defaultEncryption
+              )
             );
             if (res) {
-              localStorage.lastRemindingBackupTime = clientTime;
+              UserSettings.items.lastRemindingBackupTime = clientTime;
+              UserSettings.commitItems();
               return;
-            } else if (localStorage.oneDriveRevoked === "true") {
+            } else if (UserSettings.items.oneDriveRevoked === true) {
               instance.$store.commit(
                 "notification/alert",
                 chrome.i18n.getMessage("token_revoked", ["OneDrive"])
               );
-              localStorage.removeItem("oneDriveRevoked");
+              UserSettings.items.oneDriveRevoked = undefined;
+              UserSettings.removeItem("oneDriveRevoked");
             }
           } catch (error) {
             // ignore
@@ -290,7 +319,8 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
           "notification/alert",
           instance.i18n.remind_backup
         );
-        localStorage.lastRemindingBackupTime = clientTime;
+        UserSettings.items.lastRemindingBackupTime = clientTime;
+        UserSettings.commitItems();
       }
     );
   }
@@ -300,48 +330,7 @@ async function runScheduledBackup(clientTime: number, instance: Vue) {
     !instance.$store.state.backup.oneDriveToken
   ) {
     instance.$store.commit("notification/alert", instance.i18n.remind_backup);
-    localStorage.lastRemindingBackupTime = clientTime;
+    UserSettings.items.lastRemindingBackupTime = clientTime;
+    UserSettings.commitItems();
   }
-}
-
-export function syncTimeWithGoogle() {
-  return new Promise(
-    (resolve: (value: string) => void, reject: (reason: Error) => void) => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-        // @ts-ignore
-        const xhr = new XMLHttpRequest({ mozAnon: true });
-        xhr.open("HEAD", "https://www.google.com/generate_204");
-        const xhrAbort = setTimeout(() => {
-          xhr.abort();
-          return resolve("updateFailure");
-        }, 5000);
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState === 4) {
-            clearTimeout(xhrAbort);
-            const date = xhr.getResponseHeader("date");
-            if (!date) {
-              return resolve("updateFailure");
-            }
-            const serverTime = new Date(date).getTime();
-            const clientTime = new Date().getTime();
-            const offset = Math.round((serverTime - clientTime) / 1000);
-
-            if (Math.abs(offset) <= 300) {
-              // within 5 minutes
-              localStorage.offset = Math.round(
-                (serverTime - clientTime) / 1000
-              );
-              return resolve("updateSuccess");
-            } else {
-              return resolve("clock_too_far_off");
-            }
-          }
-        };
-        xhr.send();
-      } catch (error) {
-        return reject(error);
-      }
-    }
-  );
 }

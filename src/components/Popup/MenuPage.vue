@@ -8,24 +8,22 @@
     </div>
     <div id="menuBody">
       <div class="menuList">
-        <a href="licenses.html" target="_blank" style="text-decoration: none;">
-          <p v-bind:title="i18n.about">
-            <span><IconInfo /></span>{{ i18n.about }}
+        <p v-bind:title="i18n.advisor" v-on:click="showInfo('AdvisorPage')">
+          <span><IconAdvisor /></span>{{ i18n.advisor }}
+        </p>
+        <a
+          href="permissions.html"
+          target="_blank"
+          style="text-decoration: none"
+        >
+          <p v-bind:title="i18n.permissions">
+            <span><IconClipboardCheck /></span>{{ i18n.permissions }}
           </p>
         </a>
       </div>
       <div class="menuList">
-        <p
-          v-bind:title="i18n.export_import"
-          v-on:click="showInfo('ExportPage')"
-        >
-          <span><IconExchange /></span>{{ i18n.export_import }}
-        </p>
-        <p
-          v-bind:title="i18n.storage_menu"
-          v-on:click="showInfo('StorageSyncConfPage')"
-        >
-          <span><IconDatabase /></span>{{ i18n.storage_menu }}
+        <p v-bind:title="i18n.backup" v-on:click="showInfo('BackupPage')">
+          <span><IconExchange /></span>{{ i18n.backup }}
         </p>
         <p
           v-bind:title="i18n.security"
@@ -33,7 +31,11 @@
         >
           <span><IconLock /></span>{{ i18n.security }}
         </p>
-        <p v-bind:title="i18n.sync_clock" v-on:click="syncClock()">
+        <p
+          v-bind:title="i18n.sync_clock"
+          v-on:click="syncClock()"
+          v-if="isSupported"
+        >
           <span><IconSync /></span>{{ i18n.sync_clock }}
         </p>
         <p
@@ -59,6 +61,11 @@
         >
           <span><IconCode /></span>{{ i18n.source }}
         </p>
+        <a href="licenses.html" target="_blank" style="text-decoration: none">
+          <p v-bind:title="i18n.about">
+            <span><IconInfo /></span>{{ i18n.about }}
+          </p>
+        </a>
       </div>
       <div id="version">Version {{ version }}</div>
     </div>
@@ -66,7 +73,7 @@
 </template>
 <script lang="ts">
 import Vue from "vue";
-import { syncTimeWithGoogle } from "../../popup";
+import { syncTimeWithGoogle } from "../../syncTime";
 
 import IconArrowLeft from "../../../svg/arrow-left.svg";
 import IconInfo from "../../../svg/info.svg";
@@ -75,9 +82,13 @@ import IconDatabase from "../../../svg/database.svg";
 import IconLock from "../../../svg/lock.svg";
 import IconSync from "../../../svg/sync.svg";
 import IconWrench from "../../../svg/wrench.svg";
+import IconAdvisor from "../../../svg/lightbulb.svg";
 import IconComments from "../../../svg/comments.svg";
 import IconGlobe from "../../../svg/globe.svg";
 import IconCode from "../../../svg/code.svg";
+import IconClipboardCheck from "../../../svg/clipboard-check.svg";
+import { isFirefox, isSafari } from "../../browser";
+import { UserSettings } from "../../models/settings";
 
 export default Vue.extend({
   components: {
@@ -88,14 +99,21 @@ export default Vue.extend({
     IconLock,
     IconSync,
     IconWrench,
+    IconAdvisor,
     IconComments,
     IconGlobe,
-    IconCode
+    IconCode,
+    IconClipboardCheck,
   },
   computed: {
-    version: function() {
+    version: function () {
       return this.$store.state.menu.version;
-    }
+    },
+    isSupported: {
+      get(): boolean {
+        return !isSafari;
+      },
+    },
   },
   methods: {
     hideMenu() {
@@ -135,8 +153,9 @@ export default Vue.extend({
     syncClock() {
       chrome.permissions.request(
         { origins: ["https://www.google.com/"] },
-        async granted => {
+        async (granted) => {
           if (granted) {
+            await UserSettings.updateItems();
             const message = await syncTimeWithGoogle();
             this.$store.commit("notification/alert", this.i18n[message]);
           }
@@ -144,7 +163,7 @@ export default Vue.extend({
         }
       );
       return;
-    }
-  }
+    },
+  },
 });
 </script>

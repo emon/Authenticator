@@ -1,11 +1,12 @@
 <template>
-  <div>
+  <div v-on:keydown.stop>
     <div class="text">{{ i18n.passphrase_info }}</div>
     <a-text-input
       type="password"
       v-model="password"
       @enter="applyPassphrase()"
       :class="{ badInput: wrongPassword }"
+      :autofocus="true"
     />
     <label class="warning" v-show="wrongPassword">{{
       i18n.phrase_not_match
@@ -15,23 +16,26 @@
 </template>
 <script lang="ts">
 import Vue from "vue";
-import { mapState } from "vuex";
 
 export default Vue.extend({
-  data: function() {
+  data: function () {
     return {
-      password: ""
+      password: "",
     };
   },
   computed: {
     wrongPassword() {
       return this.$store.state.accounts.wrongPassword;
-    }
+    },
   },
   methods: {
-    applyPassphrase() {
-      this.$store.dispatch("accounts/applyPassphrase", this.password);
-    }
-  }
+    async applyPassphrase() {
+      await this.$store.dispatch("accounts/applyPassphrase", this.password);
+      const firstEntry = document.querySelector(
+        ".entry[tabindex='0']"
+      ) as HTMLElement;
+      firstEntry?.focus();
+    },
+  },
 });
 </script>

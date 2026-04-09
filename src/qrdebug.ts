@@ -12,6 +12,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       message.info.windowWidth
     );
   }
+
+  // https://stackoverflow.com/a/56483156
+  return true;
 });
 
 function getQrDebug(
@@ -22,7 +25,7 @@ function getQrDebug(
   height: number,
   windowWidth: number
 ) {
-  chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, dataUrl => {
+  chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {
     const qr = new Image();
     qr.src = dataUrl;
     qr.onload = () => {

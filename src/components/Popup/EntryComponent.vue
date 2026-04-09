@@ -1,5 +1,16 @@
 <template>
-  <div>
+  <a
+    role="button"
+    data-x-role="entry"
+    v-bind:tabindex="tabindex"
+    v-bind:class="{
+      entry: true,
+      pinnedEntry: entry.pinned,
+      'no-copy': noCopy(entry.code),
+    }"
+    v-on:click="copyCode(entry)"
+    v-on:keydown.enter="copyCode(entry)"
+  >
     <div class="deleteAction" v-on:click="removeEntry(entry)">
       <IconMinusCircle />
     </div>
@@ -15,7 +26,7 @@
           r="4"
           v-bind:style="{
             animationDuration: entry.period + 's',
-            animationDelay: (sectorOffset % entry.period) + 's'
+            animationDelay: (sectorOffset % entry.period) + 's',
           }"
         />
       </svg>
@@ -27,7 +38,12 @@
     >
       <IconRedo />
     </div>
-    <div class="issuer">{{ entry.issuer.split("::")[0] }}</div>
+    <div class="issuer">
+      {{
+        entry.issuer.split("::")[0] +
+        (theme === "compact" ? ` (${entry.account})` : "")
+      }}
+    </div>
     <div class="issuerEdit">
       <input
         v-bind:placeholder="i18n.issuer"
@@ -40,13 +56,11 @@
       v-bind:class="{
         code: true,
         hotp: entry.type === OTPType.hotp || entry.type === OTPType.hhex,
-        'no-copy': noCopy(entry.code),
-        timeout: entry.period - (second % entry.period) < 5
+        timeout: entry.period - (second % entry.period) < 5,
       }"
-      v-on:click="copyCode(entry)"
       v-html="style.isEditing ? showBulls(entry) : showCode(entry.code)"
     ></div>
-    <div class="issuer">{{ entry.account }}</div>
+    <div class="issuer account">{{ entry.account }}</div>
     <div class="issuerEdit">
       <input
         v-bind:placeholder="i18n.accountName"
@@ -58,17 +72,17 @@
     <div
       class="showqr"
       v-if="shouldShowQrIcon(entry)"
-      v-on:click="showQr(entry)"
+      v-on:click.stop="showQr(entry)"
     >
       <IconQr />
     </div>
-    <div class="pin" v-on:click="pin(entry)">
+    <div class="pin" v-on:click.stop="pin(entry)">
       <IconPin />
     </div>
     <div class="movehandle">
       <IconBars />
     </div>
-  </div>
+  </a>
 </template>
 <script lang="ts">
 import Vue from "vue";
@@ -76,6 +90,7 @@ import { mapState } from "vuex";
 import * as QRGen from "qrcode-generator";
 import { OTPEntry, OTPType, CodeState, OTPAlgorithm } from "../../models/otp";
 import { EntryStorage } from "../../models/storage";
+import { getCurrentTab, okToInjectContentScript } from "../../utils";
 
 import IconMinusCircle from "../../../svg/minus-circle.svg";
 import IconRedo from "../../../svg/redo.svg";
@@ -89,9 +104,10 @@ const computedPrototype = [
     "sectorStart",
     "sectorOffset",
     "second",
-    "encryption"
+    "encryption",
   ]),
-  mapState("style", ["style"])
+  mapState("style", ["style"]),
+  mapState("menu", ["theme"]),
 ];
 
 let computed = {};
@@ -103,7 +119,8 @@ for (const module of computedPrototype) {
 export default Vue.extend({
   computed,
   props: {
-    entry: OTPEntry
+    entry: OTPEntry,
+    tabindex: Number,
   },
   methods: {
     noCopy(code: string) {
@@ -194,7 +211,7 @@ export default Vue.extend({
 
       chrome.permissions.request(
         { permissions: ["clipboardWrite"] },
-        async granted => {
+        async (granted) => {
           if (granted) {
             const codeClipboard = document.getElementById(
               "codeClipboard"
@@ -205,27 +222,21 @@ export default Vue.extend({
 
             if (this.$store.state.menu.useAutofill) {
               await insertContentScript();
-
-              chrome.tabs.query(
-                { active: true, lastFocusedWindow: true },
-                tabs => {
-                  const tab = tabs[0];
-                  if (!tab || !tab.id) {
-                    return;
-                  }
-
-                  chrome.tabs.sendMessage(tab.id, {
-                    action: "pastecode",
-                    code: entry.code
-                  });
-                }
-              );
+              const tab = await getCurrentTab();
+              if (tab && tab.id) {
+                chrome.tabs.sendMessage(tab.id, {
+                  action: "pastecode",
+                  code: entry.code,
+                });
+              }
             }
 
+            const lastActiveElement = document.activeElement as HTMLElement;
             codeClipboard.value = entry.code;
             codeClipboard.focus();
             codeClipboard.select();
             document.execCommand("Copy");
+            lastActiveElement.focus();
             this.$store.dispatch(
               "notification/ephermalMessage",
               this.i18n.copied
@@ -235,15 +246,15 @@ export default Vue.extend({
       );
 
       return;
-    }
+    },
   },
   components: {
     IconMinusCircle,
     IconRedo,
     IconQr,
     IconBars,
-    IconPin
-  }
+    IconPin,
+  },
 });
 
 // TODO: move most of this to a models file and reuse for backup stuff
@@ -283,15 +294,17 @@ function getQrUrl(entry: OTPEntry) {
   return qr.createDataURL(5);
 }
 
-function insertContentScript() {
-  return new Promise((resolve: () => void, reject: (reason: Error) => void) => {
-    try {
-      return chrome.tabs.executeScript({ file: "/dist/content.js" }, () => {
-        chrome.tabs.insertCSS({ file: "/css/content.css" }, resolve);
-      });
-    } catch (error) {
-      return reject(error);
-    }
-  });
+async function insertContentScript() {
+  let tab = await getCurrentTab();
+  if (okToInjectContentScript(tab)) {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["/dist/content.js"],
+    });
+    await chrome.scripting.insertCSS({
+      target: { tabId: tab.id },
+      files: ["/css/content.css"],
+    });
+  }
 }
 </script>

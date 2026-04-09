@@ -1,6 +1,6 @@
-import * as argon2 from "argon2-browser";
+import argon2 from "argon2-browser";
 
-window.addEventListener("message", event => {
+window.addEventListener("message", (event) => {
   const message = event.data;
   const source = event.source as Window;
 
@@ -10,13 +10,13 @@ window.addEventListener("message", event => {
 
   switch (message.action) {
     case "hash":
-      Argon.hash(message.value).then(hash => {
+      Argon.hash(message.value, message.salt).then((hash) => {
         source.postMessage({ response: hash }, event.origin);
       });
       break;
 
     case "verify":
-      Argon.compareHash(message.hash, message.value).then(result => {
+      Argon.compareHash(message.hash, message.value).then((result) => {
         source.postMessage({ response: result }, event.origin);
       });
       break;
@@ -28,13 +28,15 @@ window.addEventListener("message", event => {
 });
 
 class Argon {
-  static async hash(value: string) {
-    const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  static async hash(value: string, salt: string | Uint8Array) {
     const hash = await argon2.hash({
       pass: value,
-      salt,
-      mem: 1024 * 16,
-      type: argon2.ArgonType.Argon2id
+      salt: salt,
+      time: 2,
+      mem: 1024 * 19,
+      parallelism: 1,
+      hashLen: 32,
+      type: argon2.ArgonType.Argon2id,
     });
 
     return hash.encoded;
@@ -45,7 +47,7 @@ class Argon {
       argon2
         .verify({
           pass: value,
-          encoded: hash
+          encoded: hash,
         })
         .then(() => resolve(true))
         .catch((e: { message: string; code: number }) => {
